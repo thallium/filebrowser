@@ -7,8 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+
+	"github.com/spf13/afero"
 
 	"github.com/gorilla/mux"
+
+	"io/ioutil"
+	"os/exec"
 
 	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/img"
@@ -62,10 +68,66 @@ func previewHandler(imgSvc ImgService, fileCache FileCache, enableThumbnails, re
 		switch file.Type {
 		case "image":
 			return handleImagePreview(w, r, imgSvc, fileCache, file, previewSize, enableThumbnails, resizePreview)
+		case "video":
+			return handleVideoPreview(w, r, imgSvc, fileCache, file, previewSize, enableThumbnails, resizePreview)
 		default:
 			return http.StatusNotImplemented, fmt.Errorf("can't create preview for %s type", file.Type)
 		}
 	})
+}
+
+func handleVideoPreview(
+	w http.ResponseWriter,
+	r *http.Request,
+	imgSvc ImgService,
+	fileCache FileCache,
+	file *files.FileInfo,
+	previewSize PreviewSize,
+	enableThumbnails, resizePreview bool,
+) (int, error) {
+	path := afero.FullBaseFsPath(file.Fs.(*afero.BasePathFs), file.Path)
+	fmt.Println(path)
+
+	cacheKey := previewCacheKey(file.Path, file.ModTime.Unix(), previewSize)
+	resizedImage, ok, err := fileCache.Load(r.Context(), cacheKey)
+	if err != nil {
+		return errToStatus(err), err
+	}
+	if !ok {
+		tmp, err2 := ioutil.TempFile("", "filebrowser.*.jpg")
+		if err2 != nil {
+			return errToStatus(err2), err2
+		}
+		os.Remove(tmp.Name())
+
+		fmt.Println(tmp.Name())
+
+		cmd := exec.Command("ffmpeg", "-y", "-i", path, "-vf", "thumbnail,scale=128:128", "-frames:v", "1", tmp.Name())
+		err := cmd.Run()
+
+		if err != nil {
+			return errToStatus(err), err
+		}
+
+		resizedImage, err = ioutil.ReadFile(tmp.Name())
+		if err != nil {
+			return http.StatusInternalServerError, err
+		}
+		os.Remove(tmp.Name())
+
+		go func() {
+			cacheKey := previewCacheKey(file.Path, file.ModTime.Unix(), previewSize)
+			if err := fileCache.Store(context.Background(), cacheKey, resizedImage); err != nil {
+				fmt.Printf("failed to cache resized image: %v", err)
+			}
+		}()
+
+	}
+
+	w.Header().Set("Cache-Control", "private")
+	w.Header().Set("Content-Type", "image/jpeg")
+	http.ServeContent(w, r, "thumbnail.jpg", file.ModTime, bytes.NewReader(resizedImage))
+	return 0, nil
 }
 
 func handleImagePreview(
