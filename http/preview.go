@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 
 	"github.com/spf13/afero"
 
 	"github.com/gorilla/mux"
 
-	"io/ioutil"
 	"os/exec"
 
 	"github.com/filebrowser/filebrowser/v2/files"
@@ -86,7 +84,6 @@ func handleVideoPreview(
 	enableThumbnails, resizePreview bool,
 ) (int, error) {
 	path := afero.FullBaseFsPath(file.Fs.(*afero.BasePathFs), file.Path)
-	//fmt.Println(path)
 
 	cacheKey := previewCacheKey(file.Path, file.ModTime.Unix(), previewSize)
 	resizedImage, ok, err := fileCache.Load(r.Context(), cacheKey)
@@ -94,37 +91,14 @@ func handleVideoPreview(
 		return errToStatus(err), err
 	}
 	if !ok {
-		tmp, err2 := ioutil.TempFile("", "filebrowser.*.webp")
-		if err2 != nil {
-			return errToStatus(err2), err2
-		}
-		tmp.Close()
-
-		err4 := os.Remove(tmp.Name())
-		if err4 != nil {
-			fmt.Println(err4)
-			return errToStatus(err4), err4
-		}
-
-		//fmt.Println(tmp.Name())
-
 		//cmd := exec.Command("ffmpeg", "-y", "-i", path, "-vf", "thumbnail,crop=w='min(iw\\,ih)':h='min(iw\\,ih)',scale=128:128", "-qscale:v", "25", "-frames:v", "1", tmp.Name())
-		cmd := exec.Command("ffmpeg", "-y", "-i", path, "-vf", "thumbnail,crop=w='min(iw\\,ih)':h='min(iw\\,ih)',scale=128:128", "-quality", "40", "-frames:v", "1", tmp.Name())
-		err := cmd.Run()
+		stdout, err := exec.Command("ffmpeg", "-y", "-i", path, "-vf", "thumbnail,crop=w='min(iw\\,ih)':h='min(iw\\,ih)',scale=128:128", "-quality", "40", "-frames:v", "1", "-c:v", "webp", "-f", "image2pipe", "-").Output()
 
 		if err != nil {
 			return errToStatus(err), err
 		}
 
-		resizedImage, err = ioutil.ReadFile(tmp.Name())
-		if err != nil {
-			return http.StatusInternalServerError, err
-		}
-		err5 := os.Remove(tmp.Name())
-		if err5 != nil {
-			fmt.Println(err5)
-			return errToStatus(err5), err5
-		}
+		resizedImage = stdout
 
 		go func() {
 			cacheKey := previewCacheKey(file.Path, file.ModTime.Unix(), previewSize)
