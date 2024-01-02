@@ -85,7 +85,7 @@ func handleVideoPreview(
 ) (int, error) {
 	path := afero.FullBaseFsPath(file.Fs.(*afero.BasePathFs), file.Path)
 
-	cacheKey := previewCacheKey(file.Path, file.ModTime.Unix(), previewSize)
+	cacheKey := previewCacheKey(file, previewSize)
 	resizedImage, ok, err := fileCache.Load(r.Context(), cacheKey)
 	if err != nil {
 		return errToStatus(err), err
@@ -101,7 +101,7 @@ func handleVideoPreview(
 		resizedImage = stdout
 
 		go func() {
-			cacheKey := previewCacheKey(file.Path, file.ModTime.Unix(), previewSize)
+			cacheKey := previewCacheKey(file, previewSize)
 			if err := fileCache.Store(context.Background(), cacheKey, resizedImage); err != nil {
 				fmt.Printf("failed to cache resized image: %v", err)
 			}
